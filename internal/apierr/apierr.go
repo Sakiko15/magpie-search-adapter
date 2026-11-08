@@ -70,7 +70,7 @@ func Detect(r *http.Request, body []byte) Vendor {
 	}
 	switch path {
 	case "/search":
-		return searchVendor(r, body)
+		return SearchVendor(r, body)
 	case "/v1/search":
 		if r.Method == http.MethodGet || r.Header.Get("X-API-Key") != "" || bodyHas(body, "freshness") {
 			return YouCom
@@ -80,9 +80,10 @@ func Detect(r *http.Request, body []byte) Vendor {
 	return OpenAI
 }
 
-// searchVendor separates the shapes that share a path: SearXNG (GET or a
+// SearchVendor separates the shapes that share a path: SearXNG (GET or a
 // form body), Exa (its own body keys), and Tavily/Serper (query or q).
-func searchVendor(r *http.Request, body []byte) Vendor {
+// Handlers use it too, so dispatch and error envelopes always agree.
+func SearchVendor(r *http.Request, body []byte) Vendor {
 	if r.Method == http.MethodGet ||
 		strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
 		return SearXNG

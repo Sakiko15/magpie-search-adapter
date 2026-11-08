@@ -277,7 +277,7 @@ func TestHandlersExtract(t *testing.T) {
 	}
 }
 
-func testHandlers(backend *fakeBackend) *Handlers {
+func testHandlers(backend magpie.Searcher) *Handlers {
 	return &Handlers{
 		Backend:       backend,
 		MaxCount:      20,

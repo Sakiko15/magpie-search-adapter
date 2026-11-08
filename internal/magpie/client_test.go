@@ -28,6 +28,8 @@ type fakeMCP struct {
 	toolError      string
 	stateless      bool
 	noFetch        bool
+	emptyCall      bool
+	stallBody      time.Duration
 }
 
 func newFakeMCP(t *testing.T, f *fakeMCP) *httptest.Server {
@@ -72,6 +74,19 @@ func newFakeMCP(t *testing.T, f *fakeMCP) *httptest.Server {
 			writeRPC(w, msg.ID, map[string]any{"tools": tools})
 		case "tools/call":
 			f.callCount.Add(1)
+			if f.stallBody > 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+				time.Sleep(f.stallBody)
+				return
+			}
+			if f.emptyCall {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
 			if r.Header.Get("Mcp-Session-Id") == "" {
 				f.missingSession.Store(true)
 			}
@@ -419,6 +434,33 @@ func TestClientAlphaEncryptedOutput(t *testing.T) {
 	_, err := client.Search(context.Background(), "go", 1, nil)
 	if !IsKind(err, KindProtocol) {
 		t.Fatalf("err = %v, want KindProtocol", err)
+	}
+}
+
+func TestClientEmptyToolResponseIsError(t *testing.T) {
+	f := &fakeMCP{emptyCall: true}
+	srv := newFakeMCP(t, f)
+	defer srv.Close()
+	client := newTestClient(t, srv.URL, "mcp", nil)
+	defer client.Close()
+
+	if _, err := client.Search(context.Background(), "go", 1, nil); err == nil {
+		t.Fatal("a 202 with no JSON-RPC result must be an error, not an empty success")
+	}
+}
+
+func TestClientReadTimeoutIsKindTimeout(t *testing.T) {
+	f := &fakeMCP{stallBody: 300 * time.Millisecond}
+	srv := newFakeMCP(t, f)
+	defer srv.Close()
+	client := newTestClient(t, srv.URL, "mcp", func(o *Options) {
+		o.RequestTimeout = 100 * time.Millisecond
+	})
+	defer client.Close()
+
+	_, err := client.Search(context.Background(), "go", 1, nil)
+	if !IsKind(err, KindTimeout) {
+		t.Fatalf("err = %v, want KindTimeout", err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -174,9 +175,9 @@ func retryable(err error, ctx context.Context) bool {
 	if err == nil || ctx.Err() != nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
+	// A classified upstream error is decided first: a KindTimeout wraps its
+	// context error, and would otherwise be turned away below even though the
+	// budget still has room for another attempt.
 	var upstream *magpie.Error
 	if errors.As(err, &upstream) {
 		switch upstream.Kind {
@@ -190,6 +191,9 @@ func retryable(err error, ctx context.Context) bool {
 			return false
 		}
 	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
 	return true
 }
 
@@ -198,7 +202,7 @@ func retryable(err error, ctx context.Context) bool {
 func cacheKey(query string, count int, includeDomains []string) string {
 	domains := make([]string, 0, len(includeDomains))
 	domains = append(domains, includeDomains...)
-	sortStrings(domains)
+	slices.Sort(domains)
 
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(query))
@@ -208,14 +212,4 @@ func cacheKey(query string, count int, includeDomains []string) string {
 	b.WriteString(strings.Join(domains, ","))
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
-}
-
-// sortStrings is a tiny insertion sort, so this file needs no extra
-// dependency on the sort package's interface machinery.
-func sortStrings(values []string) {
-	for i := 1; i < len(values); i++ {
-		for j := i; j > 0 && values[j] < values[j-1]; j-- {
-			values[j], values[j-1] = values[j-1], values[j]
-		}
-	}
 }

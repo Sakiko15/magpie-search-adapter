@@ -188,12 +188,26 @@ func (c *Client) Ready(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			hasFetch := false
 			for _, tool := range tools {
 				if tool.Name == "web_fetch" {
-					return nil
+					hasFetch = true
+					break
 				}
 			}
-			return protocolError("magpie's MCP server does not offer web_fetch (check the gateway key's MCP permissions)")
+			if !hasFetch {
+				return protocolError("magpie's MCP server does not offer web_fetch (check the gateway key's MCP permissions)")
+			}
+		}
+		// Neither /v1/models nor tools/list proves that alpha search itself
+		// works: a missing search source or an encrypted answer only shows up
+		// on a real call. /readyz caches this probe for 30 seconds.
+		results, err := c.alpha.Search(ctx, "magpie readiness probe", 1, nil)
+		if err != nil {
+			return err
+		}
+		if len(results) == 0 {
+			return protocolError("magpie's alpha search returned no results")
 		}
 		return nil
 	}

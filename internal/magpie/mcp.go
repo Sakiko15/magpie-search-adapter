@@ -95,22 +95,35 @@ func (t *mcpTransport) ensureSession(ctx context.Context) (session, protocol str
 	done := t.initDone
 	t.mu.Unlock()
 
-	// Initialization is shared: one client's cancellation must not poison
-	// the callers waiting behind it.
-	initCtx, cancel := context.WithTimeout(context.Background(), t.initTimeout)
-	s, p, e := t.initialize(initCtx)
-	cancel()
+	// Initialization is shared: one client's cancellation must not poison the
+	// callers waiting behind it. The defer publishes the outcome on every
+	// path, so a panic inside initialize cannot leave waiters stuck on done.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("magpie MCP initialization panicked: %v", recovered)
+			t.publishInit(done, "", "", err)
+			panic(recovered)
+		}
+		t.publishInit(done, session, protocol, err)
+	}()
 
+	initCtx, cancel := context.WithTimeout(context.Background(), t.initTimeout)
+	defer cancel()
+	session, protocol, err = t.initialize(initCtx)
+	return
+}
+
+// publishInit records the shared initialization outcome and wakes waiters.
+func (t *mcpTransport) publishInit(done chan struct{}, session, protocol string, err error) {
 	t.mu.Lock()
-	if e == nil {
-		t.session, t.protocol = s, p
+	defer t.mu.Unlock()
+	if err == nil {
+		t.session, t.protocol = session, protocol
 		t.initialized = true
 	}
-	t.initErr = e
+	t.initErr = err
 	t.initializing = false
 	close(done)
-	t.mu.Unlock()
-	return s, p, e
 }
 
 func (t *mcpTransport) invalidate() {
@@ -186,7 +199,7 @@ func (t *mcpTransport) rpc(ctx context.Context, method string, params any, sessi
 		return nil, err
 	}
 	if status == http.StatusAccepted && len(bytes.TrimSpace(data)) == 0 {
-		return nil, nil
+		return nil, protocolError("magpie answered without a JSON-RPC result")
 	}
 	return decodeResponse(data, headers.Get("Content-Type"), id)
 }
@@ -217,6 +230,9 @@ func (t *mcpTransport) post(ctx context.Context, body []byte, session, protocol 
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCBody+1))
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return resp.StatusCode, resp.Header, nil, &Error{Kind: KindTimeout, StatusCode: http.StatusGatewayTimeout, Message: "magpie did not answer in time", Err: err}
+		}
 		return resp.StatusCode, resp.Header, data, &Error{Kind: KindUpstream, StatusCode: http.StatusBadGateway, Message: "could not read magpie's answer", Err: err}
 	}
 	if len(data) > maxRPCBody {

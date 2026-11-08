@@ -145,6 +145,12 @@ func TestGoogleShape(t *testing.T) {
 	if len(resp.Items) != 2 || resp.Items[0].Link != "https://a.example/x" {
 		t.Fatalf("items = %#v", resp.Items)
 	}
+	if resp.Items[0].DisplayLink != "a.example" {
+		t.Fatalf("displayLink = %q, want the bare host", resp.Items[0].DisplayLink)
+	}
+	if resp.Items[0].FormattedURL != "https://a.example/x" {
+		t.Fatalf("formattedUrl = %q, want the full URL", resp.Items[0].FormattedURL)
+	}
 	if resp.SearchInformation.TotalResults != "2" || resp.Queries.Request[0].CX != "abc" {
 		t.Fatalf("envelope = %#v", resp)
 	}

@@ -151,16 +151,19 @@ func (h *Handlers) TavilyExtract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	success := make(map[string]string, len(req.URLs))
-	failed := make(map[string]string)
+	// prefailed is finished before any worker starts, so the dispatch loop
+	// below can read it while the workers fill failed/success.
+	prefailed := make(map[string]string)
 	for _, rawURL := range req.URLs {
 		if err := validateFetchURL(rawURL); err != nil {
-			failed[rawURL] = err.Error()
+			prefailed[rawURL] = err.Error()
 		}
 	}
+	failed := make(map[string]string)
 	var mu sync.Mutex
 	jobs := make(chan string, len(req.URLs))
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithTimeout(r.Context(), 110*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), h.extractTimeout())
 	defer cancel()
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
@@ -179,7 +182,7 @@ func (h *Handlers) TavilyExtract(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	for _, rawURL := range req.URLs {
-		if _, bad := failed[rawURL]; bad {
+		if _, bad := prefailed[rawURL]; bad {
 			continue
 		}
 		jobs <- rawURL
@@ -189,9 +192,13 @@ func (h *Handlers) TavilyExtract(w http.ResponseWriter, r *http.Request) {
 
 	out := extractResponse{
 		Results:       make([]extractResult, 0, len(success)),
-		FailedResults: make([]extractFailure, 0, len(failed)),
+		FailedResults: make([]extractFailure, 0, len(prefailed)+len(failed)),
 	}
 	for _, rawURL := range req.URLs {
+		if reason, ok := prefailed[rawURL]; ok {
+			out.FailedResults = append(out.FailedResults, extractFailure{URL: rawURL, Error: reason})
+			continue
+		}
 		if reason, ok := failed[rawURL]; ok {
 			out.FailedResults = append(out.FailedResults, extractFailure{URL: rawURL, Error: reason})
 			continue
@@ -201,4 +208,13 @@ func (h *Handlers) TavilyExtract(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// extractTimeout bounds one /extract batch: three workers, each page bounded
+// by FETCH_TIMEOUT, so the worst case is three sequential fetches per worker.
+func (h *Handlers) extractTimeout() time.Duration {
+	if h.FetchTimeout > 0 {
+		return h.FetchTimeout * 3
+	}
+	return 110 * time.Second
 }

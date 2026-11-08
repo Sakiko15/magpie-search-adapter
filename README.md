@@ -40,7 +40,7 @@ Magpie
 | OpenAI 模型列表 | `GET /v1/models` | — | Bearer |
 | 健康检查 | `GET /healthz`、`GET /readyz` | — | 无 |
 
-`POST /search` 同时承担 Tavily、Serper、Exa（按 body 键区分）和 SearXNG 表单（按 `Content-Type: application/x-www-form-urlencoded`）；`GET /search` 固定给 SearXNG。
+`POST /search` 同时承担 Tavily、Serper、Exa（body 含 `numResults` / `contents` / `additionalQueries` 时优先判为 Exa）和 SearXNG 表单（按 `Content-Type: application/x-www-form-urlencoded`）；`GET /search` 固定给 SearXNG。
 
 ### 客户端 base URL 怎么填
 
@@ -133,7 +133,7 @@ go run .
 | `UPSTREAM_RETRIES` | `2` | 搜索失败后的重试次数（仅 5xx / 429 / 网络错误 / 未耗尽的超时） |
 | `RETRY_BASE_DELAY` | `200ms` | 指数退避基数（full jitter） |
 | `RETRY_MAX_DELAY` | `2s` | 退避上限；上游 `Retry-After` 更长时以它为准 |
-| `SEARCH_BUDGET` | `REQUEST_TIMEOUT` | 一次搜索（含重试）的总预算 |
+| `SEARCH_BUDGET` | `REQUEST_TIMEOUT` | 一次搜索（含重试）的总预算；可大于 `REQUEST_TIMEOUT`，设为 2–3 倍才能让单次超时后还有预算重试 |
 | `SEARCH_CACHE_TTL` | `30s` | 搜索结果缓存时间；`0` 关闭 |
 | `SEARCH_CACHE_SIZE` | `1024` | 缓存条目上限（LRU） |
 | `ALLOW_KEYLESS_CIDRS` | 空 | 允许免 key 的网段（SearXNG/Jina）；逗号分隔 CIDR |
@@ -142,7 +142,7 @@ go run .
 ## 稳定性与性能
 
 - **重试**：只对可恢复错误重试（上游 5xx、429、网络错误、未耗尽的超时），指数退避 + full jitter；上游返回 `Retry-After` 时以它为准。客户端错误（400/401/403/无搜索源）不重试。
-- **时间预算**：一次搜索（含重试）不超过 `SEARCH_BUDGET`（默认等于 `REQUEST_TIMEOUT`），退避等待也受它约束。
+- **时间预算**：一次搜索（含重试）不超过 `SEARCH_BUDGET`（默认等于 `REQUEST_TIMEOUT`），退避等待也受它约束。要让“某次尝试超时后再试一次”真正发生，把 `SEARCH_BUDGET` 设为 `REQUEST_TIMEOUT` 的 2–3 倍；两者相等时一次超时就用光预算（上游快速返回的 504 仍会重试）。
 - **结果缓存**：只缓存搜索、不缓存 `fetch`；只缓存成功结果。key 包含 query、count、include domains。`SEARCH_CACHE_TTL=0` 关闭，`SEARCH_CACHE_SIZE` 限制 LRU 条目。
 - **singleflight**：相同查询的并发请求只打一次 Magpie，其余等待并共享结果；某个等待者取消不会取消共享调用。
 - **并发上限**：`MAX_CONCURRENCY` 满时立即 503。重试中的请求会一直占用槽位，所以 Magpie 故障时 503 会更早出现。
@@ -313,10 +313,11 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 
 - **条数**：Magpie 最多返回 20 条。Tavily `max_results` 默认 5，Serper `num` 默认 10，Brave `count` 默认 20，DeepSeek `count` 默认 10（合法 1..50，但上游最多 20）。各厂商自己的上限也会生效（Google `num` ≤10、Jina ≤20、Bocha/智谱 ≤50、Exa/Firecrawl/You.com ≤100），最终都受 `MAX_COUNT` 约束。模型代搜模式下实际条数由模型输出决定，适配器只能截断到请求值。
 - **正文长度**：search API 模式下 Magpie 每页只带约 1500 bytes 正文；模型代搜模式下 `content` 是模型写的要点摘要。需要全文请调用 `/v1/tools/fetch` 或 Tavily `/extract`。
+- **批量抓取超时**：Tavily `/extract` 的整批预算是 `FETCH_TIMEOUT × 3`（3 个 worker 的最坏情况）；单条 fetch 仍受 `FETCH_TIMEOUT` 约束。
 - **字段**：DeepSeek 的 `site_icon`、`date` 返回 `null`，`authority` 返回 `-1`；`site_name` 用 URL 主机名。Brave 的 `page_age` 返回 `null` 或 `""`。
 - **分数**：Tavily `score` 与 DeepSeek `rerank_score` 是适配器按顺序生成的，不是真实相关性分数。
-- **alpha 模式**：不能按请求指定条数，使用 Magpie Settings 的全局 count（默认 6，可 `magpie search count 20`）；没有 fetch；如果 `MAGPIE_ALPHA_MODEL` 命中 ChatGPT/Codex 账号模型，可能返回加密输出并报 502。
-- **域名过滤**：`include_domains` / `exclude_domains` / Google `siteSearch` 只写主机名（例如 `example.com`），不要带端口、协议或路径；适配器会去掉 `*.`、`.` 和 `www.` 前缀，其余非法值返回 400。URL 形式的条目（`https://example.com:443/x`）会先取主机名，端口会被丢掉。
+- **alpha 模式**：不能按请求指定条数，使用 Magpie Settings 的全局 count（默认 6，可 `magpie search count 20`）；没有 fetch；如果 `MAGPIE_ALPHA_MODEL` 命中 ChatGPT/Codex 账号模型，可能返回加密输出并报 502；alpha 模式下 `/readyz` 会真的调一次 `/v1/alpha/search`（结果缓存 30s，会消耗额度）。
+- **域名过滤**：`include_domains` / `exclude_domains` / Google `siteSearch` 只写主机名（例如 `example.com`），不要带端口、协议或路径；适配器会去掉 `*.`、`.` 和 `www.` 前缀，其余非法值（包括裸 `*`）返回 400，列表最多 100 条。URL 形式的条目（`https://example.com:443/x`）会先取主机名，端口会被丢掉。
 - **字段诚实性**：拿不到的字段一律 `null` 或省略，不编造。例如 Firecrawl 的 `markdown` / `html` / `rawHtml`，Exa 的 `publishedDate` / `author` / `image` / `favicon` / `subpages`，Google 的 `pagemap` / `image`，You.com 的 `thumbnail_url` / `page_age`；`content` / `text` / `summary` 在模型代搜模式下是 Magpie 给的要点摘要。
 - **分页**：SearXNG `pageno>1` 返回空页；Google `start` 在我们缓存的 ≤20 条内切片，越界返回空 `items`；You.com `offset` 按页索引切片，超出同样返回空数组。
 - **模型代搜（当前模式）**：Magpie 用“会搜索的模型”回答时，适配器会按要点（`* **…:**` + `*Page:*` / `*Pages:*` 链接）拆成多条结果，内容为要点摘要。URL 是 grounding 跳转链接（302 到真实页面），`site_name` 是跳转域名，没有每页正文，条数由模型决定。想要真实 URL + 正文可按“Magpie 搜索源”切换 search API。

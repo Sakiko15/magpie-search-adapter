@@ -1,0 +1,33 @@
+package config
+
+import (
+	"testing"
+	"time"
+)
+
+func requiredEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("ADAPTER_API_KEYS", "test-key")
+	t.Setenv("MAGPIE_API_KEY", "sk-magpie-key-test")
+}
+
+func TestLoadRejectsMalformedInt(t *testing.T) {
+	requiredEnv(t)
+	t.Setenv("MAX_COUNT", "2O")
+	if _, err := Load(); err == nil {
+		t.Fatal("MAX_COUNT=2O must not silently fall back to the default")
+	}
+}
+
+func TestLoadAllowsBudgetLargerThanRequestTimeout(t *testing.T) {
+	requiredEnv(t)
+	t.Setenv("REQUEST_TIMEOUT", "60s")
+	t.Setenv("SEARCH_BUDGET", "180s")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SearchBudget != 180*time.Second {
+		t.Fatalf("budget = %s, want 180s", cfg.SearchBudget)
+	}
+}

@@ -20,7 +20,7 @@ type firecrawlMetadata struct {
 	Description string  `json:"description"`
 	SourceURL   string  `json:"sourceURL"`
 	URL         string  `json:"url"`
-	StatusCode  int     `json:"statusCode"`
+	StatusCode  *int    `json:"statusCode,omitempty"`
 	NumPages    int     `json:"numPages"`
 	TotalPages  int     `json:"totalPages"`
 	Error       *string `json:"error"`
@@ -175,7 +175,6 @@ func firecrawlWebFrom(result magpie.Result) firecrawlWeb {
 			Description: description,
 			SourceURL:   result.URL,
 			URL:         result.URL,
-			StatusCode:  http.StatusOK,
 			NumPages:    0,
 			TotalPages:  0,
 			Error:       nil,

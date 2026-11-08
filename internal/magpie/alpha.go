@@ -80,6 +80,9 @@ func (a *alphaSearcher) Search(ctx context.Context, query string, count int, dom
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRPCBody+1))
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, &Error{Kind: KindTimeout, StatusCode: http.StatusGatewayTimeout, Message: "magpie did not answer in time", Err: err}
+		}
 		return nil, &Error{Kind: KindUpstream, StatusCode: http.StatusBadGateway, Message: "could not read magpie's answer", Err: err}
 	}
 	if len(data) > maxRPCBody {

@@ -124,7 +124,12 @@ func (h *Handlers) GoogleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, result := range results[offset:end] {
 			snippet := snippetOf(result)
-			display := displayURL(result.URL)
+			// Google's displayLink is the bare host; formattedUrl keeps the
+			// full link.
+			display := result.URL
+			if parsed, err := url.Parse(result.URL); err == nil && parsed.Host != "" {
+				display = parsed.Host
+			}
 			out.Items = append(out.Items, googleItem{
 				Kind:             "customsearch#result",
 				Title:            result.Title,

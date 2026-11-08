@@ -87,7 +87,8 @@ func TestNoRetryOnClientError(t *testing.T) {
 
 func TestCacheHitAndExpiry(t *testing.T) {
 	inner := newFake()
-	s := Wrap(inner, Config{CacheTTL: 40 * time.Millisecond, CacheSize: 8}, nil)
+	// A long TTL keeps the hit assertions independent of scheduling delays.
+	s := Wrap(inner, Config{CacheTTL: 2 * time.Second, CacheSize: 8}, nil)
 
 	for i := 0; i < 3; i++ {
 		if _, err := s.Search(context.Background(), "go", 5, nil); err != nil {
@@ -103,12 +104,20 @@ func TestCacheHitAndExpiry(t *testing.T) {
 	if inner.count() != 2 {
 		t.Fatalf("a different count must not hit the cache: calls = %d", inner.count())
 	}
-	time.Sleep(60 * time.Millisecond)
-	if _, err := s.Search(context.Background(), "go", 5, nil); err != nil {
+
+	// Expiry gets its own wrapper and a distinct query, so the long-lived
+	// cache above cannot interfere.
+	expiring := Wrap(inner, Config{CacheTTL: 20 * time.Millisecond, CacheSize: 8}, nil)
+	if _, err := expiring.Search(context.Background(), "expire", 5, nil); err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if inner.count() != 3 {
-		t.Fatalf("expired entry must be refetched: calls = %d", inner.count())
+	before := inner.count()
+	time.Sleep(40 * time.Millisecond)
+	if _, err := expiring.Search(context.Background(), "expire", 5, nil); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if inner.count() != before+1 {
+		t.Fatalf("expired entry was reused: calls = %d, want %d", inner.count(), before+1)
 	}
 }
 

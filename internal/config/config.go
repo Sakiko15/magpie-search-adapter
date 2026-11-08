@@ -62,17 +62,21 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		ListenAddr:     env("LISTEN_ADDR", "0.0.0.0:8787"),
-		MagpieBaseURL:  strings.TrimRight(env("MAGPIE_BASE_URL", "https://magpie.127001001.xyz"), "/"),
-		MagpieAPIKey:   strings.TrimSpace(os.Getenv("MAGPIE_API_KEY")),
-		SearchMode:     strings.ToLower(env("MAGPIE_SEARCH_MODE", "mcp")),
-		MCPPath:        env("MAGPIE_MCP_PATH", "/mcp/magpie/web-search"),
-		AlphaModel:     env("MAGPIE_ALPHA_MODEL", "magpie-search-adapter"),
-		FetchMode:      strings.ToLower(env("MAGPIE_FETCH_MODE", "mcp")),
-		MaxBodyBytes:   int64Env("MAX_BODY_BYTES", 1<<20),
-		MaxConcurrency: intEnv("MAX_CONCURRENCY", 32),
+		ListenAddr:    env("LISTEN_ADDR", "0.0.0.0:8787"),
+		MagpieBaseURL: strings.TrimRight(env("MAGPIE_BASE_URL", "https://magpie.127001001.xyz"), "/"),
+		MagpieAPIKey:  strings.TrimSpace(os.Getenv("MAGPIE_API_KEY")),
+		SearchMode:    strings.ToLower(env("MAGPIE_SEARCH_MODE", "mcp")),
+		MCPPath:       env("MAGPIE_MCP_PATH", "/mcp/magpie/web-search"),
+		AlphaModel:    env("MAGPIE_ALPHA_MODEL", "magpie-search-adapter"),
+		FetchMode:     strings.ToLower(env("MAGPIE_FETCH_MODE", "mcp")),
 	}
 	var err error
+	if cfg.MaxBodyBytes, err = int64Env("MAX_BODY_BYTES", 1<<20); err != nil {
+		return nil, err
+	}
+	if cfg.MaxConcurrency, err = intEnv("MAX_CONCURRENCY", 32); err != nil {
+		return nil, err
+	}
 	if cfg.InitTimeout, err = durationEnv("INIT_TIMEOUT", 10*time.Second); err != nil {
 		return nil, err
 	}
@@ -82,12 +86,20 @@ func Load() (*Config, error) {
 	if cfg.FetchTimeout, err = durationEnv("FETCH_TIMEOUT", 90*time.Second); err != nil {
 		return nil, err
 	}
-	cfg.MaxCount = intEnv("MAX_COUNT", 20)
-	cfg.DefaultCount = intEnv("DEFAULT_COUNT", 6)
-	cfg.FetchMaxChars = intEnv("FETCH_MAX_CHARS", 100000)
+	if cfg.MaxCount, err = intEnv("MAX_COUNT", 20); err != nil {
+		return nil, err
+	}
+	if cfg.DefaultCount, err = intEnv("DEFAULT_COUNT", 6); err != nil {
+		return nil, err
+	}
+	if cfg.FetchMaxChars, err = intEnv("FETCH_MAX_CHARS", 100000); err != nil {
+		return nil, err
+	}
 	cfg.LogLevel = levelEnv("LOG_LEVEL", slog.LevelInfo)
 
-	cfg.UpstreamRetries = intEnv("UPSTREAM_RETRIES", 2)
+	if cfg.UpstreamRetries, err = intEnv("UPSTREAM_RETRIES", 2); err != nil {
+		return nil, err
+	}
 	if cfg.RetryBaseDelay, err = durationEnv("RETRY_BASE_DELAY", 200*time.Millisecond); err != nil {
 		return nil, err
 	}
@@ -97,7 +109,9 @@ func Load() (*Config, error) {
 	if cfg.SearchCacheTTL, err = durationEnv("SEARCH_CACHE_TTL", 30*time.Second); err != nil {
 		return nil, err
 	}
-	cfg.SearchCacheSize = intEnv("SEARCH_CACHE_SIZE", 1024)
+	if cfg.SearchCacheSize, err = intEnv("SEARCH_CACHE_SIZE", 1024); err != nil {
+		return nil, err
+	}
 	if raw := env("SEARCH_BUDGET", ""); raw == "" {
 		cfg.SearchBudget = cfg.RequestTimeout
 	} else if cfg.SearchBudget, err = time.ParseDuration(raw); err != nil {
@@ -146,8 +160,8 @@ func Load() (*Config, error) {
 		return nil, errors.New("RETRY_BASE_DELAY must be positive")
 	case cfg.RetryMaxDelay < cfg.RetryBaseDelay:
 		return nil, errors.New("RETRY_MAX_DELAY must not be smaller than RETRY_BASE_DELAY")
-	case cfg.SearchBudget <= 0 || cfg.SearchBudget > cfg.RequestTimeout:
-		return nil, fmt.Errorf("SEARCH_BUDGET must be positive and at most REQUEST_TIMEOUT, not %s", cfg.SearchBudget)
+	case cfg.SearchBudget <= 0:
+		return nil, errors.New("SEARCH_BUDGET must be positive")
 	case cfg.SearchCacheTTL < 0:
 		return nil, errors.New("SEARCH_CACHE_TTL must not be negative")
 	case cfg.SearchCacheSize < 1:
@@ -222,20 +236,31 @@ func parseCIDRs(raw string) ([]netip.Prefix, error) {
 	return out, nil
 }
 
-func intEnv(key string, def int) int {
-	v, err := strconv.Atoi(env(key, ""))
-	if err != nil {
-		return def
+// intEnv reads an integer setting. A value that does not parse is an error,
+// not a silent fallback: MAX_COUNT=2O (letter O) must not look like the
+// default was meant.
+func intEnv(key string, def int) (int, error) {
+	raw := env(key, "")
+	if raw == "" {
+		return def, nil
 	}
-	return v
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return v, nil
 }
 
-func int64Env(key string, def int64) int64 {
-	v, err := strconv.ParseInt(env(key, ""), 10, 64)
-	if err != nil {
-		return def
+func int64Env(key string, def int64) (int64, error) {
+	raw := env(key, "")
+	if raw == "" {
+		return def, nil
 	}
-	return v
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return v, nil
 }
 
 func durationEnv(key string, def time.Duration) (time.Duration, error) {

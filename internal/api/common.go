@@ -30,14 +30,17 @@ type Handlers struct {
 	MaxCount      int
 	DefaultCount  int
 	FetchMaxChars int
+	FetchTimeout  time.Duration
 	FetchEnabled  bool
 	Mode          string
 	Logger        *slog.Logger
 	ReadyFn       func(context.Context) error
 
-	readyMu  sync.Mutex
-	readyAt  time.Time
-	readyErr error
+	readyMu   sync.Mutex
+	readyAt   time.Time
+	readyErr  error
+	probing   bool
+	probeDone chan struct{}
 }
 
 func NewHandlers(backend magpie.Searcher, cfg *config.Config, logger *slog.Logger) *Handlers {
@@ -49,6 +52,7 @@ func NewHandlers(backend magpie.Searcher, cfg *config.Config, logger *slog.Logge
 		MaxCount:      cfg.MaxCount,
 		DefaultCount:  cfg.DefaultCount,
 		FetchMaxChars: cfg.FetchMaxChars,
+		FetchTimeout:  cfg.FetchTimeout,
 		FetchEnabled:  cfg.FetchMode == "mcp",
 		Mode:          cfg.SearchMode,
 		Logger:        logger,
@@ -122,7 +126,14 @@ func clampCount(n, def, max int) int {
 	return n
 }
 
+// maxDomains caps one request's domain filters: they are only used to build
+// the result filter and the cache key, so a huge list is never useful.
+const maxDomains = 100
+
 func normalizeDomains(in []string) ([]string, error) {
+	if len(in) > maxDomains {
+		return nil, fmt.Errorf("at most %d domains are accepted", maxDomains)
+	}
 	out := make([]string, 0, len(in))
 	for _, raw := range in {
 		d := strings.ToLower(strings.TrimSpace(raw))
@@ -141,8 +152,10 @@ func normalizeDomains(in []string) ([]string, error) {
 		// Results are compared by HostOf, which drops a leading www.
 		d = strings.TrimPrefix(d, "www.")
 		// A bare host must not carry a port or brackets: filterDomains
-		// compares against Hostname(), which never has either.
-		if d == "" || strings.ContainsAny(d, " /\\?#@:") {
+		// compares against Hostname(), which never has either. "*" would
+		// never match anything, so it is rejected rather than silently
+		// returning no results.
+		if d == "" || d == "*" || strings.ContainsAny(d, " /\\?#@:") {
 			return nil, fmt.Errorf("invalid domain %q", raw)
 		}
 		out = append(out, d)
@@ -155,6 +168,9 @@ func filterDomains(results []magpie.Result, include, exclude []string) []magpie.
 	for _, result := range results {
 		host := strings.ToLower(magpie.HostOf(result.URL))
 		if host == "" {
+			// A model's prose answer can come back without a parseable URL.
+			// Keeping the one fallback result beats answering with nothing.
+			out = append(out, result)
 			continue
 		}
 		if len(include) > 0 && !matchesAnyHost(host, include) {
@@ -218,6 +234,20 @@ func validQuery(q string, maxRunes int) error {
 	return nil
 }
 
+// cgnat is 100.64.0.0/10, the shared carrier-grade NAT range. netip does not
+// count it as private, but it reaches cloud-internal and metadata services.
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
+// isPublicAddr reports whether ip is a global unicast address that is safe to
+// fetch: not private, loopback, link-local, multicast, unspecified or CGNAT.
+func isPublicAddr(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	return !cgnat.Contains(ip)
+}
+
 func validateFetchURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -232,17 +262,16 @@ func validateFetchURL(raw string) error {
 		}
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	// Hostname() rather than Host: "http://:8080/" has a host but no name,
+	// and net.Dial would read that as the local machine.
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
 		return errors.New("url must be an absolute http(s) URL")
 	}
 	if u.User != nil {
 		return errors.New("url must not contain a username or password")
 	}
-	if ip, err := netip.ParseAddr(u.Hostname()); err == nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-			ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-			return errors.New("url points to a private or special address")
-		}
+	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && !isPublicAddr(ip) {
+		return errors.New("url points to a private or special address")
 	}
 	return nil
 }

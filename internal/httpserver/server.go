@@ -45,7 +45,9 @@ func New(cfg *config.Config, backend magpie.Searcher, readyFn func(context.Conte
 		apiMux.HandleFunc(route.Pattern, route.Handler)
 	}
 
-	protected := withConcurrency(mw.Wrap(apiMux), cfg.MaxConcurrency)
+	// Concurrency sits inside auth: an unauthenticated caller must not be able
+	// to hold a slot and starve real clients.
+	protected := mw.Wrap(withConcurrency(apiMux, cfg.MaxConcurrency))
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /healthz", handlers.Health)
@@ -87,7 +89,10 @@ func withConcurrency(next http.Handler, max int) http.Handler {
 			defer func() { <-sem }()
 			next.ServeHTTP(w, r)
 		default:
-			apierr.Write(w, apierr.Detect(r, nil), http.StatusServiceUnavailable, "too many concurrent requests")
+			// The auth middleware already buffered the body, so the vendor
+			// shape of this 503 matches the one the handler would have used.
+			body, _ := auth.BodyFromContext(r.Context())
+			apierr.Write(w, apierr.Detect(r, body), http.StatusServiceUnavailable, "too many concurrent requests")
 		}
 	})
 }
