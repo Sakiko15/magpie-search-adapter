@@ -56,6 +56,30 @@ Magpie
 
 所有接口都接受 `ADAPTER_API_KEYS` 中的任意一个 key。鉴权失败返回各厂商自己的错误形状。免 key 访问默认关闭，见“稳定性与性能”的 `ALLOW_KEYLESS_CIDRS`。
 
+### 接入方式怎么选（new-api vs 直连）
+
+两种方式都能用，区别在治理能力和接口覆盖：
+
+| 场景 | 推荐 | 理由 |
+|---|---|---|
+| 多用户 / 团队，需要独立 token、计费、限额 | **接入 new-api** | 适配器只有共享 key，无法按用户治理；new-api 负责鉴权、配额、计费、日志 |
+| 自己用或少量内部服务 | **直连** | 少一层转发，延迟最低，调试简单 |
+| 客户端要用 Tavily / Serper / Exa / Firecrawl / SearXNG / Google / You.com / Bocha / 智谱 / Jina 的原生形状 | **直连** | new-api 只暴露 DeepSeek 形状（`/v1/tools/search`、`/v1/tools/fetch`） |
+| 客户端只会调 new-api 的 `/v1/tools/search` | **接入 new-api** | 适配器本身不实现 new-api 的 token/计费层 |
+
+经 new-api 调用时，客户端只会用到 DeepSeek 形状这一个接口（`/v1/tools/search`、`/v1/tools/fetch`），参数只有 `query`、`count`、`need_content`、`ori_question`、`localization`。Tavily / Serper / Brave / Exa / Firecrawl / SearXNG / Google / You.com / Bocha / 智谱 / Jina 的形状、Tavily `/extract`、`include_domains` / `exclude_domains`、分页都只在直连时可用。注意这跟**上游搜索源**是两回事：Magpie 侧配置的 search API（或模型代搜）在两种接入方式下都是同一条链路，接入 new-api 不会减少上游搜索服务的种类。
+
+本项目默认按**直连 + 1Panel 反向代理**部署；只有需要 new-api 的 token、配额或计费时才启用 new-api。
+
+推荐拓扑：
+
+```text
+公网客户端 → new-api（token/配额/计费） → compose 内网 → magpie-search-adapter → Magpie
+内网服务 / 厂商 SDK ──────────────────────→ magpie-search-adapter（仅内网或 HTTPS 反代）
+```
+
+安全底线：**不要把适配器的明文端口直接暴露公网**。适配器只有静态共享 key，没有按 key 的配额、计费或用量统计，服务本身也是明文 HTTP。直连场景把 `LISTEN_ADDR` 设为 `127.0.0.1:8787` 或内网 IP；必须公网直连时，套 HTTPS 反向代理并在反代做限流和访问控制，定期轮换 `ADAPTER_API_KEYS`。对外多用户优先走 new-api。
+
 ## 快速开始
 
 要求 Go 1.26+。
@@ -179,7 +203,36 @@ docker exec <magpie容器> magpie search                         # 查看已配�
 | 模型代搜（当前） | grounding 跳转链接，302 到真实页面 | 模型要点摘要 | 由模型决定，适配器只能截断 |
 | search API | 真实页面 URL | 每页约 1500 bytes | 受请求 `count` 控制（≤20） |
 
-## 接入 new-api
+### 搜索模型与思考强度（searcher / searcherEffort）
+
+Magpie 的“模型代搜”用哪个模型、想多久，由 `settings.json` 的三个键控制。CLI 键名区分大小写，就是 JSON 名；容器内用 `magpie settings set <key> <value>`：
+
+| 键 | 取值 | 说明 |
+|---|---|---|
+| `searcher` | 空（自动）/ 模型 id / `off` | 空 = Magpie 按 provider 顺序自动选；`off` = 只用已配置的 search API |
+| `searcherEffort` | 空 / `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max` / `ultra` | 空 = 不发送 effort、用模型自己的默认；`none` 关闭思考；其余越高思考越久 |
+| `searchFirst` | `model` / `api` | `api` = 先问 search API，失败再回到模型代搜 |
+
+**适配器不需要因这些设置改动**：它只解析 Magpie 返回的文本。但设置会直接影响：
+
+| 影响面 | 说明 |
+|---|---|
+| 延迟 / 超时 | effort 越高越慢。适配器单次搜索受 `REQUEST_TIMEOUT`（默认 60s）和 `SEARCH_BUDGET`（默认等于它）约束，超出返回 504。`high` 及以上建议把两者一起调到 90–120s（`SEARCH_BUDGET` 不能大于 `REQUEST_TIMEOUT`） |
+| 条数 | 模型代搜由模型决定引用几条，适配器只能截断；要可控条数用 search API |
+| URL / 正文 | 模型代搜给 grounding 跳转链接 + 摘要；search API 给真实 URL + 约 1500 bytes 正文 |
+| 解析命中率 | 换模型可能改变输出格式；适配器认编号列表、`*Page:*` / `*Pages:*`、markdown 链接和裸 URL，认不出时整段文本作为 1 条结果 |
+
+推荐：
+
+- **保持默认**：当前“模型代搜”已实测可用，不需要改。
+- 想更快：`magpie settings set searcherEffort low`（或 `none` 完全关闭思考）。
+- 想真实 URL / 正文 / 可控条数：`magpie settings set searchFirst api`（或 `searcher off`），并按上一节添加 search API。
+- 改回默认：`magpie settings reset searcherEffort`（`searcher`、`searchFirst` 同理）。
+- alpha 模式下 `MAGPIE_ALPHA_MODEL` 是适配器发给 `/v1/alpha/search` 的 model，与这三个键独立；仍要避免命中 ChatGPT/Codex 账号模型。
+
+## 接入 new-api（可选）
+
+直连对外部署可以跳过本节。只有需要 new-api 的统一 token、分组、配额、计费或日志时，再按本节把适配器挂成一个 DeepSeek 渠道。
 
 new-api 需要包含 `POST /v1/tools/search` 的版本：该路由由 2026-10-17 的 commit 引入，随 **v1.0.0-rc.45** 发布。
 
@@ -282,69 +335,138 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 
 当前 Magpie 实例使用“会搜索的模型”，返回 Google grounding 的 `vertexaisearch.cloud.google.com/...` 跳转链接（实测 302 到真实页面）。适配器会把模型写的要点解析成独立的 `results`；`site_name` 是跳转域名，`content` 是要点摘要，没有每页正文。这是当前部署的预期行为。若以后需要真实 URL + 页面正文，可按“Magpie 搜索源”的可选步骤切换 search API，适配器无需改动。
 
-## 部署到服务器（Docker Compose）
+## 部署到服务器（1Panel 编排 + 反向代理，直连对外）
 
-Magpie 和 new-api 都在 Docker / Compose 里时，把适配器作为同网络的一个服务。
+适配器只监听宿主机的 `127.0.0.1:8787`，由 1Panel 的 OpenResty 提供 HTTPS 和反向代理；公网只开 80/443。
 
-1. 在服务器上进入项目目录，生成渠道密钥和 `.env`：
+### 1. 准备代码和配置
 
-   ```bash
-   cp .env.example .env
-   # 先生成渠道密钥，把输出填到 ADAPTER_API_KEYS：
-   openssl rand -hex 32
-   # 然后编辑 .env：
-   #   ADAPTER_API_KEYS=<上一步的输出>
-   #   MAGPIE_API_KEY=<新的有效 gateway key>
-   #   MAGPIE_BASE_URL=https://magpie.127001001.xyz
-   #   MAGPIE_SEARCH_MODE=mcp
-   #   LISTEN_ADDR=0.0.0.0:8787
-   ```
+在服务器上（1Panel 的编排目录，或任意目录）：
 
-   `ADAPTER_API_KEYS` 是给 new-api 渠道用的密钥；`MAGPIE_API_KEY` 只给适配器用，两者不要混。
+```bash
+mkdir -p /opt/1panel/docker/compose/magpie-search-adapter
+git clone https://github.com/Sakiko15/magpie-search-adapter.git /opt/1panel/docker/compose/magpie-search-adapter
+cd /opt/1panel/docker/compose/magpie-search-adapter
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env
+openssl rand -hex 32   # 输出填到 .env 的 ADAPTER_API_KEYS
+```
 
-2. 构建并启动：
+编辑 `.env`，至少要改：
 
-   ```bash
-   docker build -t magpie-search-adapter .
-   docker compose -f docker-compose.example.yml up -d
-   ```
+```dotenv
+ADAPTER_API_KEYS=<上一步的输出；多个客户端用逗号分隔，各给一个 key>
+MAGPIE_API_KEY=<有效的 Magpie gateway key>
+MAGPIE_BASE_URL=https://magpie.127001001.xyz
+```
 
-3. 确认适配器接在 new-api 的网络上：
+`ADAPTER_API_KEYS` 是客户端 key；`MAGPIE_API_KEY` 只给适配器用，两者不要混。`ALLOW_KEYLESS_CIDRS` 保持空——反代后适配器只看到 OpenResty 的来源地址。
 
-   ```bash
-   docker network ls
-   docker compose -f <new-api-compose.yml> ps
-   ```
+### 2. 用 1Panel 编排启动
 
-   `docker-compose.example.yml` 默认找 `new-api_default`；项目名不同就覆盖：
+1Panel → 容器 → 编排 → 创建编排 → 路径选择 `/opt/1panel/docker/compose/magpie-search-adapter/docker-compose.yml`，构建并启动。也可以在终端执行：
 
-   ```bash
-   NEW_API_NETWORK=<实际网络名> docker compose -f docker-compose.example.yml up -d
-   ```
+```bash
+docker compose up -d --build
+```
 
-4. 在 new-api 的网络里验证连通性：
+compose 里已经写了 `ports: ["127.0.0.1:8787:8787"]`，端口不会直接对公网开放。若 1Panel 拉取 `golang:1.26-alpine` 失败，先在 1Panel 的容器 → 配置 → 镜像加速里配置 Docker Hub 镜像。
 
-   ```bash
-   docker run --rm --network <实际网络名> curlimages/curl -s \
-     http://magpie-search-adapter:8787/readyz
-   ```
+验证容器：
 
-   期望 `{"ready":true}`。
+```bash
+curl -s http://127.0.0.1:8787/healthz
+curl -s http://127.0.0.1:8787/readyz
+```
 
-5. new-api 后台 → 渠道 → 添加：
+### 3. 1Panel 反向代理 + HTTPS
 
-   - 类型 **DeepSeek**，Base URL `http://magpie-search-adapter:8787`
-   - 密钥用 `.env` 里的 `ADAPTER_API_KEYS`
-   - 模型只勾 `deepseek-search` / `deepseek-fetch`
-   - 其余步骤见上面“接入 new-api”
+1. 1Panel → 网站 → 创建网站 → 反向代理，填写域名（例如 `search.example.com`）。
+2. 代理地址填 `http://127.0.0.1:8787`。
+3. 创建后在网站 → HTTPS 里申请证书并开启强制 HTTPS。
+4. 打开该网站的反向代理配置（1Panel 网站 → 反向代理 → 配置文件/配置修改），把超时调到大于适配器的 90s fetch：
 
-如果 new-api 与适配器不在同一个 compose 网络，取消 `docker-compose.example.yml` 里 `ports` 的注释，然后在渠道里填 `http://<服务器内网IP>:8787`。
+```nginx
+client_max_body_size 2m;
+proxy_connect_timeout 30s;
+proxy_send_timeout 300s;
+proxy_read_timeout 300s;
+```
+
+1Panel 的 OpenResty 默认 `proxy_read_timeout` 是 60s，不改会在 `/v1/tools/fetch` 或较慢的搜索上先于适配器返回 504。
+
+如果 OpenResty 无法访问宿主机的 `127.0.0.1`，把代理地址改成宿主机内网 IP（如 `http://192.168.1.10:8787`）或 Docker 网桥地址 `http://172.17.0.1:8787`。
+
+### 4. 防火墙
+
+1Panel → 主机 → 防火墙（以及云厂商安全组）只放行 22/80/443；不要放行 8787。端口已经绑定在 `127.0.0.1`，即使误开防火墙也不会直接暴露。
+
+### 5. 验证
+
+```bash
+curl -s https://search.example.com/healthz
+curl -s https://search.example.com/readyz
+curl -s https://search.example.com/search \
+  -H "Authorization: Bearer <ADAPTER_API_KEYS 里的 key>" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"golang","max_results":3}'
+```
+
+期望 `/readyz` 返回 `{"ready":true}`，搜索返回非空 `results`。
+
+### 6. 客户端怎么填
+
+base URL 是 `https://search.example.com`，按“客户端 base URL 怎么填”的表加厂商前缀：
+
+| 客户端 | base URL |
+|---|---|
+| Tavily | `https://search.example.com`（`POST /search`） |
+| Exa SDK | `https://search.example.com/exa` |
+| Firecrawl SDK | `https://search.example.com`（`POST /v1/search`、`/v2/search`） |
+| SearXNG 客户端 | `https://search.example.com`（`GET /search?format=json&key=<key>`） |
+| Google CSE | `https://search.example.com`（`GET /customsearch/v1?...&key=<key>`） |
+
+SearXNG/Jina 这类不能加 header 的客户端用 `?key=`；不要用 `ALLOW_KEYLESS_CIDRS`（反代后来源地址都是 OpenResty）。
+
+### 7. Key 管理与限流
+
+- 每个客户端一个 key，写在 `ADAPTER_API_KEYS`（逗号分隔）；删除某个 key 后重启容器即可吊销。
+- 适配器只有全局并发上限 `MAX_CONCURRENCY`，没有按 key 的配额。公网部署建议在 1Panel 的 OpenResty 里加限流，或按客户端固定 IP 做网站 ACL/防火墙白名单：
+
+  ```nginx
+  # http 段
+  limit_req_zone $binary_remote_addr zone=magpie_search:10m rate=5r/s;
+  # location 段
+  limit_req zone=magpie_search burst=10 nodelay;
+  ```
+
+- `ADAPTER_API_KEYS` 用长随机串；泄露后从 `.env` 删除并重启容器，同时给客户端换新 key。
+
+### 可选：接入 new-api
+
+需要 new-api 的 token/配额/计费时，用 `docker-compose.new-api.example.yml` 把适配器加入 new-api 的 compose 网络：
+
+```bash
+docker compose -f docker-compose.new-api.example.yml up -d
+# 项目名不同时：
+NEW_API_NETWORK=<实际网络名> docker compose -f docker-compose.new-api.example.yml up -d
+```
+
+在 new-api 的网络里验证：
+
+```bash
+docker run --rm --network <实际网络名> curlimages/curl -s \
+  http://magpie-search-adapter:8787/readyz
+```
+
+然后在 new-api 后台 → 渠道 → 添加：类型 **DeepSeek**，Base URL `http://magpie-search-adapter:8787`，密钥用 `.env` 里的 `ADAPTER_API_KEYS`，模型只勾 `deepseek-search` / `deepseek-fetch`。其余步骤见上面“接入 new-api（可选）”。
 
 Magpie 也在 Docker 里时，`MAGPIE_BASE_URL=https://magpie.127001001.xyz` 可用；如果服务器无法访问自己的公网域名（hairpin NAT），改成 Magpie 的服务名/端口，或 `http://host.docker.internal:<端口>` 并打开 `extra_hosts` 的注释。
 
 只想单容器试跑：
 
 ```bash
+docker build -t magpie-search-adapter .
 docker run --rm -p 127.0.0.1:8787:8787 \
   -e ADAPTER_API_KEYS=change-me \
   -e MAGPIE_API_KEY=sk-magpie-key-... \

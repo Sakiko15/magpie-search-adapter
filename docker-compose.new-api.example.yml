@@ -1,0 +1,31 @@
+services:
+  magpie-search-adapter:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8787
+    expose:
+      - "8787"
+    # Magpie is in Docker too, so host.docker.internal is not needed by default.
+    # Uncomment when Magpie runs on the host and MAGPIE_BASE_URL uses
+    # host.docker.internal:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    # If new-api is not on this compose network, publish the port instead and
+    # point the channel at http://<server-ip>:8787:
+    # ports:
+    #   - "127.0.0.1:8787:8787"
+    networks:
+      - new-api
+
+# Use the network new-api already runs on. Check with:
+#   docker network ls
+#   docker compose -f <new-api-compose.yml> ps
+# Override the default name when the new-api compose project is not "new-api":
+#   NEW_API_NETWORK=myproject_default docker compose -f docker-compose.new-api.example.yml up -d
+networks:
+  new-api:
+    external: true
+    name: ${NEW_API_NETWORK:-new-api_default}
