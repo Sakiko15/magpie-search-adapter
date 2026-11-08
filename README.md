@@ -346,7 +346,7 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 
 1. 等 GitHub Actions 的 `docker` 工作流跑完（仓库 Actions 页）。首次发布后到 GitHub → Packages → `magpie-search-adapter` → Package settings，确认 visibility 是 **Public**（公开仓库默认继承；匿名拉取必须 Public）。
 2. 1Panel → 容器 → 编排 → 创建编排 → 名称 `magpie-search-adapter` → **编辑**，粘贴 `deploy/1panel/docker-compose.yml` 的内容。
-3. 只改两行：`ADAPTER_API_KEYS`（用 `openssl rand -hex 32` 生成）和 `MAGPIE_API_KEY`。保存并启动。
+3. compose 分「核心配置」（镜像/容器名/重启/端口，一般不动）和「环境变量」两块。只改环境变量里标 `Required` 的两行：`ADAPTER_API_KEYS`（用 `openssl rand -hex 32` 生成）和 `MAGPIE_API_KEY`；其余都有默认值，调优项以注释列出，取消注释即生效（完整含义见上面“配置”）。保存并启动。
 4. 容器列表里看到 `magpie-search-adapter` 运行后，在服务器上验证：
 
    ```bash

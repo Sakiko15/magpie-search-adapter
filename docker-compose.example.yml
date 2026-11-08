@@ -1,18 +1,23 @@
 services:
   magpie-search-adapter:
+    # ===== Core settings =====
     build:
       context: .
       dockerfile: Dockerfile
     image: magpie-search-adapter:latest
     restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      LISTEN_ADDR: 0.0.0.0:8787
     # Bind to loopback only: 1Panel's OpenResty proxies to it. Never open 8787
     # in the firewall.
     ports:
       - "127.0.0.1:8787:8787"
+
+    # ===== Environment variables =====
+    # Everything else lives in .env (copy .env.example). LISTEN_ADDR is pinned
+    # here because it must match the published port.
+    env_file:
+      - .env
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8787
     # Magpie is in Docker too, so host.docker.internal is not needed by default.
     # Uncomment when Magpie runs on the host and MAGPIE_BASE_URL uses
     # host.docker.internal:
