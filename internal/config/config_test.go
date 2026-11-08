@@ -9,6 +9,7 @@ func requiredEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("ADAPTER_API_KEYS", "test-key")
 	t.Setenv("MAGPIE_API_KEY", "sk-magpie-key-test")
+	t.Setenv("MAGPIE_BASE_URL", "https://magpie.example.com")
 }
 
 func TestLoadRejectsMalformedInt(t *testing.T) {

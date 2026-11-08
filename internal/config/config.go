@@ -63,7 +63,7 @@ func Load() (*Config, error) {
 	}
 	cfg := &Config{
 		ListenAddr:    env("LISTEN_ADDR", "0.0.0.0:8787"),
-		MagpieBaseURL: strings.TrimRight(env("MAGPIE_BASE_URL", "https://magpie.127001001.xyz"), "/"),
+		MagpieBaseURL: strings.TrimRight(env("MAGPIE_BASE_URL", ""), "/"),
 		MagpieAPIKey:  strings.TrimSpace(os.Getenv("MAGPIE_API_KEY")),
 		SearchMode:    strings.ToLower(env("MAGPIE_SEARCH_MODE", "mcp")),
 		MCPPath:       env("MAGPIE_MCP_PATH", "/mcp/magpie/web-search"),
@@ -134,6 +134,8 @@ func Load() (*Config, error) {
 		return nil, errors.New("ADAPTER_API_KEYS is required (comma-separated keys)")
 	case cfg.MagpieAPIKey == "":
 		return nil, errors.New("MAGPIE_API_KEY is required (a valid Magpie gateway key)")
+	case cfg.MagpieBaseURL == "":
+		return nil, errors.New("MAGPIE_BASE_URL is required (your Magpie gateway URL)")
 	case cfg.SearchMode != "mcp" && cfg.SearchMode != "alpha":
 		return nil, fmt.Errorf("MAGPIE_SEARCH_MODE must be mcp or alpha, not %q", cfg.SearchMode)
 	case cfg.FetchMode != "mcp" && cfg.FetchMode != "off":

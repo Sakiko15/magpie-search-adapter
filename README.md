@@ -90,7 +90,7 @@ cd D:\cc_prj\prj2\ts10
 # 1. 配置（至少这四项）
 $env:ADAPTER_API_KEYS = "change-me-to-a-long-random-key"
 $env:MAGPIE_API_KEY = "sk-magpie-key-..."   # 必须是有效的 gateway key
-$env:MAGPIE_BASE_URL = "https://magpie.127001001.xyz"
+$env:MAGPIE_BASE_URL = "https://magpie.example.com"   # 你的 Magpie 网关地址
 $env:MAGPIE_SEARCH_MODE = "mcp"             # mcp 或 alpha
 
 # 2. 自检（会真的搜索一次，消耗 Magpie 额度）
@@ -116,7 +116,7 @@ go run .
 |---|---|---|
 | `LISTEN_ADDR` | `0.0.0.0:8787` | 监听地址 |
 | `ADAPTER_API_KEYS` | 必填 | 逗号分隔的静态 key；new-api 渠道 key 从这里选一个 |
-| `MAGPIE_BASE_URL` | `https://magpie.127001001.xyz` | Magpie 网关地址，不要带 query/fragment |
+| `MAGPIE_BASE_URL` | 必填 | Magpie 网关地址（如 `https://magpie.example.com`），不要带 query/fragment |
 | `MAGPIE_API_KEY` | 必填 | 有效的 Magpie gateway key |
 | `MAGPIE_SEARCH_MODE` | `mcp` | `mcp`：官方 MCP，支持 count 1..20 与 fetch；`alpha`：纯 HTTP `/v1/alpha/search`，完全不碰 MCP，但条数受 Magpie 全局设置限制、没有 fetch |
 | `MAGPIE_MCP_PATH` | `/mcp/magpie/web-search` | MCP 路径 |
@@ -382,7 +382,7 @@ openssl rand -hex 32   # 输出填到 .env 的 ADAPTER_API_KEYS
 ```dotenv
 ADAPTER_API_KEYS=<上一步的输出；多个客户端用逗号分隔，各给一个 key>
 MAGPIE_API_KEY=<有效的 Magpie gateway key>
-MAGPIE_BASE_URL=https://magpie.127001001.xyz
+MAGPIE_BASE_URL=https://magpie.example.com   # 你的 Magpie 网关地址
 ```
 
 `ADAPTER_API_KEYS` 是客户端 key；`MAGPIE_API_KEY` 只给适配器用，两者不要混。`ALLOW_KEYLESS_CIDRS` 保持空——反代后适配器只看到 OpenResty 的来源地址。
@@ -471,7 +471,7 @@ docker run --rm --network <实际网络名> curlimages/curl -s \
 
 然后在 new-api 后台 → 渠道 → 添加：类型 **DeepSeek**，Base URL `http://magpie-search-adapter:8787`，密钥用 `.env` 里的 `ADAPTER_API_KEYS`，模型只勾 `deepseek-search` / `deepseek-fetch`。其余步骤见上面“接入 new-api（可选）”。
 
-Magpie 也在 Docker 里时，`MAGPIE_BASE_URL=https://magpie.127001001.xyz` 可用；如果服务器无法访问自己的公网域名（hairpin NAT），改成 Magpie 的服务名/端口，或 `http://host.docker.internal:<端口>` 并打开 `extra_hosts` 的注释。
+Magpie 也在 Docker 里时，`MAGPIE_BASE_URL` 填你的网关地址（如 `https://magpie.example.com`）即可；如果服务器无法访问自己的公网域名（hairpin NAT），改成 Magpie 的服务名/端口，或 `http://host.docker.internal:<端口>` 并打开 `extra_hosts` 的注释。
 
 只想单容器试跑（用已发布的镜像；本地构建就换成 `magpie-search-adapter`）：
 
@@ -479,6 +479,6 @@ Magpie 也在 Docker 里时，`MAGPIE_BASE_URL=https://magpie.127001001.xyz` 可
 docker run --rm -p 127.0.0.1:8787:8787 \
   -e ADAPTER_API_KEYS=change-me \
   -e MAGPIE_API_KEY=sk-magpie-key-... \
-  -e MAGPIE_BASE_URL=https://magpie.127001001.xyz \
+  -e MAGPIE_BASE_URL=https://magpie.example.com \
   ghcr.io/sakiko15/magpie-search-adapter:latest
 ```
