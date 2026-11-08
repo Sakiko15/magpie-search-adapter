@@ -21,12 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # docker compose config needs the env files to exist; this also proves
-      # every env_file path is right.
-      - name: Prepare env files
-        run: |
-          cp .env.example .env
-          cp .env.example deploy/1panel/.env
+      # docker compose config needs the root .env for the source-build
+      # composes; the 1Panel compose is self-contained.
+      - name: Prepare env file
+        run: cp .env.example .env
 
       # The same parser 1Panel runs (Docker Compose v2), so a file it would
       # reject fails here first.
