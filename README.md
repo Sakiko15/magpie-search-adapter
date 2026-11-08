@@ -336,11 +336,35 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 
 当前 Magpie 实例使用“会搜索的模型”，返回 Google grounding 的 `vertexaisearch.cloud.google.com/...` 跳转链接（实测 302 到真实页面）。适配器会把模型写的要点解析成独立的 `results`；`site_name` 是跳转域名，`content` 是要点摘要，没有每页正文。这是当前部署的预期行为。若以后需要真实 URL + 页面正文，可按“Magpie 搜索源”的可选步骤切换 search API，适配器无需改动。
 
-## 部署到服务器（1Panel 编排 + 反向代理，直连对外）
+## 1Panel 编排部署（直连对外）
+
+默认用**方式 A（预构建镜像）**：GitHub Actions 把镜像推到 GHCR，1Panel 编排里粘贴 YAML 即可启动，不 clone、不编译。镜像拉不动时再走方式 B。
 
 适配器只监听宿主机的 `127.0.0.1:8787`，由 1Panel 的 OpenResty 提供 HTTPS 和反向代理；公网只开 80/443。
 
-### 1. 准备代码和配置
+### 方式 A：预构建镜像（一键，推荐）
+
+1. 等 GitHub Actions 的 `docker` 工作流跑完（仓库 Actions 页）。首次发布后到 GitHub → Packages → `magpie-search-adapter` → Package settings，确认 visibility 是 **Public**（公开仓库默认继承；匿名拉取必须 Public）。
+2. 1Panel → 容器 → 编排 → 创建编排 → 名称 `magpie-search-adapter` → **编辑**，粘贴 `deploy/1panel/docker-compose.yml` 的内容。
+3. 只改两行：`ADAPTER_API_KEYS`（用 `openssl rand -hex 32` 生成）和 `MAGPIE_API_KEY`。保存并启动。
+4. 容器列表里看到 `magpie-search-adapter` 运行后，在服务器上验证：
+
+   ```bash
+   curl -s http://127.0.0.1:8787/healthz
+   curl -s http://127.0.0.1:8787/readyz
+   ```
+
+5. 更新镜像：1Panel 编排详情里重建，或终端执行：
+
+   ```bash
+   cd /opt/1panel/docker/compose/magpie-search-adapter
+   docker compose pull && docker compose up -d
+   ```
+
+   （1Panel 默认编排目录；安装路径不同就替换。）
+6. ghcr.io 拉不动时：给 Docker 配置代理，或改用方式 B。
+
+### 方式 B：源码构建（备用）
 
 在服务器上（1Panel 的编排目录，或任意目录）：
 
@@ -363,24 +387,9 @@ MAGPIE_BASE_URL=https://magpie.127001001.xyz
 
 `ADAPTER_API_KEYS` 是客户端 key；`MAGPIE_API_KEY` 只给适配器用，两者不要混。`ALLOW_KEYLESS_CIDRS` 保持空——反代后适配器只看到 OpenResty 的来源地址。
 
-### 2. 用 1Panel 编排启动
+然后 1Panel → 容器 → 编排 → 创建编排 → **路径选择** `/opt/1panel/docker/compose/magpie-search-adapter/docker-compose.yml`，构建并启动；或终端 `docker compose up -d --build`。compose 已写 `ports: ["127.0.0.1:8787:8787"]`。若拉取 `golang:1.26-alpine` 失败，先在 1Panel 的容器 → 配置 → 镜像加速里配置 Docker Hub 镜像。
 
-1Panel → 容器 → 编排 → 创建编排 → 路径选择 `/opt/1panel/docker/compose/magpie-search-adapter/docker-compose.yml`，构建并启动。也可以在终端执行：
-
-```bash
-docker compose up -d --build
-```
-
-compose 里已经写了 `ports: ["127.0.0.1:8787:8787"]`，端口不会直接对公网开放。若 1Panel 拉取 `golang:1.26-alpine` 失败，先在 1Panel 的容器 → 配置 → 镜像加速里配置 Docker Hub 镜像。
-
-验证容器：
-
-```bash
-curl -s http://127.0.0.1:8787/healthz
-curl -s http://127.0.0.1:8787/readyz
-```
-
-### 3. 1Panel 反向代理 + HTTPS
+### 反向代理 + HTTPS
 
 1. 1Panel → 网站 → 创建网站 → 反向代理，填写域名（例如 `search.example.com`）。
 2. 代理地址填 `http://127.0.0.1:8787`。
@@ -398,11 +407,11 @@ proxy_read_timeout 300s;
 
 如果 OpenResty 无法访问宿主机的 `127.0.0.1`，把代理地址改成宿主机内网 IP（如 `http://192.168.1.10:8787`）或 Docker 网桥地址 `http://172.17.0.1:8787`。
 
-### 4. 防火墙
+### 防火墙
 
 1Panel → 主机 → 防火墙（以及云厂商安全组）只放行 22/80/443；不要放行 8787。端口已经绑定在 `127.0.0.1`，即使误开防火墙也不会直接暴露。
 
-### 5. 验证
+### 验证
 
 ```bash
 curl -s https://search.example.com/healthz
@@ -415,7 +424,7 @@ curl -s https://search.example.com/search \
 
 期望 `/readyz` 返回 `{"ready":true}`，搜索返回非空 `results`。
 
-### 6. 客户端怎么填
+### 客户端怎么填
 
 base URL 是 `https://search.example.com`，按“客户端 base URL 怎么填”的表加厂商前缀：
 
@@ -429,7 +438,7 @@ base URL 是 `https://search.example.com`，按“客户端 base URL 怎么填�
 
 SearXNG/Jina 这类不能加 header 的客户端用 `?key=`；不要用 `ALLOW_KEYLESS_CIDRS`（反代后来源地址都是 OpenResty）。
 
-### 7. Key 管理与限流
+### Key 管理与限流
 
 - 每个客户端一个 key，写在 `ADAPTER_API_KEYS`（逗号分隔）；删除某个 key 后重启容器即可吊销。
 - 适配器只有全局并发上限 `MAX_CONCURRENCY`，没有按 key 的配额。公网部署建议在 1Panel 的 OpenResty 里加限流，或按客户端固定 IP 做网站 ACL/防火墙白名单：
@@ -464,13 +473,12 @@ docker run --rm --network <实际网络名> curlimages/curl -s \
 
 Magpie 也在 Docker 里时，`MAGPIE_BASE_URL=https://magpie.127001001.xyz` 可用；如果服务器无法访问自己的公网域名（hairpin NAT），改成 Magpie 的服务名/端口，或 `http://host.docker.internal:<端口>` 并打开 `extra_hosts` 的注释。
 
-只想单容器试跑：
+只想单容器试跑（用已发布的镜像；本地构建就换成 `magpie-search-adapter`）：
 
 ```bash
-docker build -t magpie-search-adapter .
 docker run --rm -p 127.0.0.1:8787:8787 \
   -e ADAPTER_API_KEYS=change-me \
   -e MAGPIE_API_KEY=sk-magpie-key-... \
   -e MAGPIE_BASE_URL=https://magpie.127001001.xyz \
-  magpie-search-adapter
+  ghcr.io/sakiko15/magpie-search-adapter:latest
 ```

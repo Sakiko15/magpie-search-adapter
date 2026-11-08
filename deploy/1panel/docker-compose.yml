@@ -1,0 +1,19 @@
+# Paste this file into 1Panel: 容器 -> 编排 -> 创建编排 -> 编辑.
+# Change ADAPTER_API_KEYS and MAGPIE_API_KEY, then save and start.
+services:
+  magpie-search-adapter:
+    image: ghcr.io/sakiko15/magpie-search-adapter:latest
+    container_name: magpie-search-adapter
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8787
+      # Comma-separated client keys; give each client its own.
+      ADAPTER_API_KEYS: "change-me-to-a-long-random-key"
+      # A valid Magpie gateway key. Never reuse ADAPTER_API_KEYS here.
+      MAGPIE_API_KEY: "sk-magpie-key-replace-me"
+      MAGPIE_BASE_URL: "https://magpie.127001001.xyz"
+      MAGPIE_SEARCH_MODE: "mcp"
+      MAGPIE_FETCH_MODE: "mcp"
+    ports:
+      # Loopback only: 1Panel's OpenResty proxies to it.
+      - "127.0.0.1:8787:8787"
