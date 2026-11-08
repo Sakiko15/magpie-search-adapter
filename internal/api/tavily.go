@@ -210,11 +210,16 @@ func (h *Handlers) TavilyExtract(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// extractTimeout bounds one /extract batch: three workers, each page bounded
-// by FETCH_TIMEOUT, so the worst case is three sequential fetches per worker.
-func (h *Handlers) extractTimeout() time.Duration {
-	if h.FetchTimeout > 0 {
-		return h.FetchTimeout * 3
+// ExtractBatchTimeout bounds one /extract batch: three workers, each page
+// bounded by FETCH_TIMEOUT, so the worst case is three sequential fetches per
+// worker. It is also used for the HTTP server's write timeout.
+func ExtractBatchTimeout(fetch time.Duration) time.Duration {
+	if fetch > 0 {
+		return fetch * 3
 	}
 	return 110 * time.Second
+}
+
+func (h *Handlers) extractTimeout() time.Duration {
+	return ExtractBatchTimeout(h.FetchTimeout)
 }

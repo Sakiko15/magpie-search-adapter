@@ -64,6 +64,10 @@ func New(cfg *config.Config, backend magpie.Searcher, readyFn func(context.Conte
 	if cfg.SearchBudget > writeTimeout {
 		writeTimeout = cfg.SearchBudget
 	}
+	// A /extract batch can run three sequential fetches per worker.
+	if batch := api.ExtractBatchTimeout(cfg.FetchTimeout); batch > writeTimeout {
+		writeTimeout = batch
+	}
 	writeTimeout += 30 * time.Second
 	if writeTimeout < 120*time.Second {
 		writeTimeout = 120 * time.Second

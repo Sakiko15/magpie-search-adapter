@@ -49,7 +49,7 @@ func main() {
 	defer client.Close()
 
 	if *selfcheck {
-		os.Exit(runSelfCheck(client, logger))
+		os.Exit(runSelfCheck(client, cfg.RequestTimeout, logger))
 	}
 
 	srv, err := httpserver.New(cfg, resilience.Wrap(client, resilience.Config{
@@ -100,8 +100,14 @@ func main() {
 	}
 }
 
-func runSelfCheck(client *magpie.Client, logger *slog.Logger) int {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+func runSelfCheck(client *magpie.Client, requestTimeout time.Duration, logger *slog.Logger) int {
+	// Ready may run a probe search in alpha mode; allow one full timeout for
+	// it and one for the selfcheck search, with margin.
+	timeout := 2*requestTimeout + 30*time.Second
+	if timeout < 2*time.Minute {
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := client.Ready(ctx); err != nil {
 		logger.Error("selfcheck: magpie is not ready", "error", err)

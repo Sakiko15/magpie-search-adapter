@@ -1,3 +1,5 @@
 .env
 /bin/
 *.exe
+# Local 1Panel/OpenResty reference files with real domains; never commit.
+/反向代理/

@@ -80,7 +80,7 @@ func Load() (*Config, error) {
 	if cfg.InitTimeout, err = durationEnv("INIT_TIMEOUT", 10*time.Second); err != nil {
 		return nil, err
 	}
-	if cfg.RequestTimeout, err = durationEnv("REQUEST_TIMEOUT", 60*time.Second); err != nil {
+	if cfg.RequestTimeout, err = durationEnv("REQUEST_TIMEOUT", 90*time.Second); err != nil {
 		return nil, err
 	}
 	if cfg.FetchTimeout, err = durationEnv("FETCH_TIMEOUT", 90*time.Second); err != nil {

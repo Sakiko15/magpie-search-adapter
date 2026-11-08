@@ -32,3 +32,19 @@ func TestLoadAllowsBudgetLargerThanRequestTimeout(t *testing.T) {
 		t.Fatalf("budget = %s, want 180s", cfg.SearchBudget)
 	}
 }
+
+func TestLoadDefaultsRequestTimeout(t *testing.T) {
+	requiredEnv(t)
+	t.Setenv("REQUEST_TIMEOUT", "")
+	t.Setenv("SEARCH_BUDGET", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RequestTimeout != 90*time.Second {
+		t.Fatalf("request timeout = %s, want 90s", cfg.RequestTimeout)
+	}
+	if cfg.SearchBudget != 90*time.Second {
+		t.Fatalf("budget = %s, want 90s", cfg.SearchBudget)
+	}
+}

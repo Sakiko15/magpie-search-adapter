@@ -1,5 +1,5 @@
 # Paste this file into 1Panel: 容器 -> 编排 -> 创建编排 -> 编辑.
-# Change the two required environment variables, then save and start.
+# Change the three required environment variables, then save and start.
 services:
   magpie-search-adapter:
     # ===== Core settings =====
@@ -9,7 +9,8 @@ services:
     restart: unless-stopped
     ports:
       # Loopback only: 1Panel's OpenResty proxies to it. Never open 8787 in
-      # the firewall.
+      # the firewall. If OpenResty cannot reach 127.0.0.1, bind 172.17.0.1
+      # here and use that address in proxy_pass (see README).
       - "127.0.0.1:8787:8787"
 
     # ===== Environment variables =====
@@ -19,17 +20,19 @@ services:
       ADAPTER_API_KEYS: "change-me-to-a-long-random-key"
       # A valid Magpie gateway key. Never reuse ADAPTER_API_KEYS here.
       MAGPIE_API_KEY: "sk-magpie-key-replace-me"
+      # Your Magpie gateway URL; the example host is a placeholder.
+      MAGPIE_BASE_URL: "https://magpie.example.com"
 
       # --- Common (defaults shown; override when needed) ---
       LISTEN_ADDR: "0.0.0.0:8787"
-      # Your Magpie gateway URL (the example host is a placeholder).
-      MAGPIE_BASE_URL: "https://magpie.example.com"
       MAGPIE_SEARCH_MODE: "mcp"   # mcp or alpha
       MAGPIE_FETCH_MODE: "mcp"    # mcp or off
+      # Search timeout. SEARCH_BUDGET is left unset so it follows
+      # REQUEST_TIMEOUT; set it to 2-3x if you want timeout retries.
+      REQUEST_TIMEOUT: "90s"
 
       # --- Tuning (defaults in the comments; uncomment to change) ---
       # INIT_TIMEOUT: "10s"
-      # REQUEST_TIMEOUT: "60s"
       # FETCH_TIMEOUT: "90s"
       # DEFAULT_COUNT: "6"
       # MAX_COUNT: "20"
@@ -39,7 +42,6 @@ services:
       # UPSTREAM_RETRIES: "2"
       # RETRY_BASE_DELAY: "200ms"
       # RETRY_MAX_DELAY: "2s"
-      # SEARCH_BUDGET: "60s"        # 2-3x REQUEST_TIMEOUT lets a timed-out attempt retry
       # SEARCH_CACHE_TTL: "30s"     # 0 disables the result cache
       # SEARCH_CACHE_SIZE: "1024"
       # ALLOW_KEYLESS_CIDRS: ""     # keep empty behind the proxy; use ?key= instead

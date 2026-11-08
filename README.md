@@ -123,7 +123,7 @@ go run .
 | `MAGPIE_ALPHA_MODEL` | `magpie-search-adapter` | alpha 模式请求里的 model；应避免命中 ChatGPT/Codex 账号模型 |
 | `MAGPIE_FETCH_MODE` | `mcp` | `mcp` 或 `off`；alpha 模式下如果连 fetch 也不想用 MCP，设为 `off` |
 | `INIT_TIMEOUT` | `10s` | MCP initialize 超时 |
-| `REQUEST_TIMEOUT` | `60s` | 单次搜索超时 |
+| `REQUEST_TIMEOUT` | `90s` | 单次搜索超时 |
 | `FETCH_TIMEOUT` | `90s` | 单次 fetch 超时 |
 | `DEFAULT_COUNT` | `6` | 未指定条数时的通用兜底 |
 | `MAX_COUNT` | `20` | 上限（Magpie 最多 20） |
@@ -213,11 +213,11 @@ Magpie 的“模型代搜”用哪个模型、想多久，由 `settings.json` �
 | `searcherEffort` | 空 / `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max` / `ultra` | 空 = 不发送 effort、用模型自己的默认；`none` 关闭思考；其余越高思考越久 |
 | `searchFirst` | `model` / `api` | `api` = 先问 search API，失败再回到模型代搜 |
 
-**适配器不需要因这些设置改动**：它只解析 Magpie 返回的文本。但设置会直接影响：
+**这些设置只能全局生效**：Magpie v0.1.3331 的 MCP `web_search` 只接受 `query`/`count`，alpha 的 `/v1/alpha/search` 接受 `model`、`commands.search_query`（`q`/`domains`）和 `settings.external_web_access`；`searcher`/`searcherEffort` 不是单次请求参数，适配器也无法按请求切换。**适配器不需要因这些设置改动**：它只解析 Magpie 返回的文本。但设置会直接影响：
 
 | 影响面 | 说明 |
 |---|---|
-| 延迟 / 超时 | effort 越高越慢。适配器单次搜索受 `REQUEST_TIMEOUT`（默认 60s）和 `SEARCH_BUDGET`（默认等于它）约束，超出返回 504。`high` 及以上建议把两者一起调到 90–120s（`SEARCH_BUDGET` 不能大于 `REQUEST_TIMEOUT`） |
+| 延迟 / 超时 | effort 越高越慢。适配器单次搜索受 `REQUEST_TIMEOUT`（默认 90s）和 `SEARCH_BUDGET`（默认等于它）约束，超出返回 504。`high` 及以上如果仍 504，把 `REQUEST_TIMEOUT` 调到 120–180s；想让超时后还能重试，把 `SEARCH_BUDGET` 设为它的 2–3 倍（可以大于 `REQUEST_TIMEOUT`） |
 | 条数 | 模型代搜由模型决定引用几条，适配器只能截断；要可控条数用 search API |
 | URL / 正文 | 模型代搜给 grounding 跳转链接 + 摘要；search API 给真实 URL + 约 1500 bytes 正文 |
 | 解析命中率 | 换模型可能改变输出格式；适配器认编号列表、`*Page:*` / `*Pages:*`、markdown 链接和裸 URL，认不出时整段文本作为 1 条结果 |
@@ -346,7 +346,7 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 
 1. 等 GitHub Actions 的 `docker` 工作流跑完（仓库 Actions 页）。首次发布后到 GitHub → Packages → `magpie-search-adapter` → Package settings，确认 visibility 是 **Public**（公开仓库默认继承；匿名拉取必须 Public）。
 2. 1Panel → 容器 → 编排 → 创建编排 → 名称 `magpie-search-adapter` → **编辑**，粘贴 `deploy/1panel/docker-compose.yml` 的内容。
-3. compose 分「核心配置」（镜像/容器名/重启/端口，一般不动）和「环境变量」两块。只改环境变量里标 `Required` 的两行：`ADAPTER_API_KEYS`（用 `openssl rand -hex 32` 生成）和 `MAGPIE_API_KEY`；其余都有默认值，调优项以注释列出，取消注释即生效（完整含义见上面“配置”）。保存并启动。只替换引号里的值，不要增删空格或空行；如果编辑器把缩进改坏了，把那一行（含 6 个前导空格）整行替换，不要逐行敲。
+3. compose 分「核心配置」（镜像/容器名/重启/端口，一般不动）和「环境变量」两块。只改环境变量里标 `Required` 的三行：`ADAPTER_API_KEYS`（用 `openssl rand -hex 32` 生成）、`MAGPIE_API_KEY`、`MAGPIE_BASE_URL`（换成你的 Magpie 网关地址，示例主机是占位符）；其余都有默认值，调优项以注释列出，取消注释即生效（完整含义见上面“配置”）。保存并启动。只替换引号里的值，不要增删空格或空行；如果编辑器把缩进改坏了，把那一行（含 6 个前导空格）整行替换，不要逐行敲。
 4. 容器列表里看到 `magpie-search-adapter` 运行后，在服务器上验证：
 
    ```bash
@@ -393,19 +393,23 @@ MAGPIE_BASE_URL=https://magpie.example.com   # 你的 Magpie 网关地址
 
 1. 1Panel → 网站 → 创建网站 → 反向代理，填写域名（例如 `search.example.com`）。
 2. 代理地址填 `http://127.0.0.1:8787`。
-3. 创建后在网站 → HTTPS 里申请证书并开启强制 HTTPS。
-4. 打开该网站的反向代理配置（1Panel 网站 → 反向代理 → 配置文件/配置修改），把超时调到大于适配器的 90s fetch：
+3. 创建后在网站 → HTTPS 里申请证书。**不要打开「强制 HTTPS」**：它会往站点主配置写回 301，下一步会整份替换掉。
+4. 用仓库里的 [`deploy/1panel/reverse-proxy.conf`](deploy/1panel/reverse-proxy.conf) 整体替换该网站的反向代理配置（1Panel 网站 → 反向代理 → 配置文件，对应 `/www/sites/<域名>/proxy/root.conf`）。
 
-```nginx
-client_max_body_size 2m;
-proxy_connect_timeout 30s;
-proxy_send_timeout 300s;
-proxy_read_timeout 300s;
-```
+   相对 1Panel 的默认值，这份配置把 `proxy_send_timeout` / `proxy_read_timeout` 调到 600s（默认 `proxy_read_timeout` 是 60s，会先于适配器的搜索/extract 返回 504）、`client_max_body_size` 设为 2m、透传 `X-Forwarded-*` / `X-Real-IP`（适配器只信任 TCP 源地址，不读取这些头；如需按真实 IP 限流，请在反代上做），并去掉 SSE/WebSocket 才需要的 `Upgrade` / `Connection` 透传（适配器没有流式响应）。
 
-1Panel 的 OpenResty 默认 `proxy_read_timeout` 是 60s，不改会在 `/v1/tools/fetch` 或较慢的搜索上先于适配器返回 504。
+5. 用 [`deploy/1panel/site-server.conf`](deploy/1panel/site-server.conf) 整体替换站点主配置（1Panel 网站 → 配置修改）。把文件里 **6 处** `search.example.com` 换成自己的域名（`server_name`、`error_log`、证书两处、`root`、末行 `include`）。
 
-如果 OpenResty 无法访问宿主机的 `127.0.0.1`，把代理地址改成宿主机内网 IP（如 `http://192.168.1.10:8787`）或 Docker 网桥地址 `http://172.17.0.1:8787`。
+   这份配置已经包含：`return 308` / `error_page 497 =308`（301 会把 POST 变成 GET 并丢掉请求体；适配器的搜索/抓取接口大多是 POST，SearXNG、Google CSE、Brave、Jina 等是 GET，308 对两种方法都保留原方法和 body）、HSTS 加 `always`、`ssl_session_tickets off`、`underscores_in_headers on; ignore_invalid_headers off;`（兼容带下划线头的客户端）、`access_log off`（避免 `?key=` 被写进日志）。末行 `include .../proxy/*.conf;` 不能删，第 4 步的 `location` 靠它生效。`http2 on;` 需要 OpenResty ≥1.25.3.1；旧版请删掉这一行。
+
+   > 1Panel 在改域名、切换 HTTPS 等操作时可能重写站点主配置；如果发现 308 或 HSTS 丢了，重新粘贴这份文件即可。
+
+如果 OpenResty 跑在独立容器里、访问不到宿主机的 `127.0.0.1`，不要直接把 `proxy_pass` 改成本机内网 IP：compose 只把 8787 绑定在 `127.0.0.1`，内网 IP 上并没有监听。二选一：
+
+- 把 compose 的 `ports` 改成 `"172.17.0.1:8787:8787"`（只绑定 Docker 网桥地址），`proxy_pass` 用 `http://172.17.0.1:8787`；
+- 或让 OpenResty 与适配器共享 Docker 网络，`proxy_pass http://magpie-search-adapter:8787`（容器名）。
+
+无论哪种都不要在公网防火墙放行 8787。
 
 ### 防火墙
 

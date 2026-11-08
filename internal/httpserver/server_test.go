@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"magpie-search-adapter/internal/config"
 	"magpie-search-adapter/internal/magpie"
@@ -91,5 +92,31 @@ func TestServerEndToEnd(t *testing.T) {
 	}
 	if resp := post("/v1/tools/fetch", "adapter-key", "", `{"url":"https://example.com/"}`); resp.StatusCode != http.StatusOK {
 		t.Fatalf("fetch = %d", resp.StatusCode)
+	}
+}
+
+func TestWriteTimeoutIncludesExtractBatch(t *testing.T) {
+	cfg := &config.Config{
+		ListenAddr:     "127.0.0.1:0",
+		AdapterAPIKeys: []string{"adapter-key"},
+		MagpieBaseURL:  "http://127.0.0.1:1",
+		MagpieAPIKey:   "test-key",
+		SearchMode:     "mcp",
+		FetchMode:      "mcp",
+		MaxCount:       20,
+		FetchMaxChars:  100000,
+		MaxBodyBytes:   1 << 20,
+		MaxConcurrency: 4,
+		LogLevel:       slog.LevelError,
+		FetchTimeout:   90 * time.Second,
+		RequestTimeout: 90 * time.Second,
+		SearchBudget:   90 * time.Second,
+	}
+	srv, err := New(cfg, testBackend{}, func(context.Context) error { return nil }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 300 * time.Second; srv.WriteTimeout != want {
+		t.Fatalf("WriteTimeout = %s, want %s", srv.WriteTimeout, want)
 	}
 }

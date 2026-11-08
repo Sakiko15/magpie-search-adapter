@@ -81,7 +81,7 @@ func NewClient(opts Options) (*Client, error) {
 		opts.InitTimeout = 10 * time.Second
 	}
 	if opts.RequestTimeout <= 0 {
-		opts.RequestTimeout = 60 * time.Second
+		opts.RequestTimeout = 90 * time.Second
 	}
 	if opts.FetchTimeout <= 0 {
 		opts.FetchTimeout = 90 * time.Second

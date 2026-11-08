@@ -33,3 +33,27 @@ jobs:
           docker compose -f deploy/1panel/docker-compose.yml config -q
           docker compose -f docker-compose.example.yml config -q
           docker compose -f docker-compose.new-api.example.yml config -q
+
+      # 1Panel's OpenResty runs `nginx -t` on save; catch syntax errors here.
+      - name: Validate nginx configs
+        run: |
+          set -euo pipefail
+          SITE="$RUNNER_TEMP/site"
+          mkdir -p "$SITE/proxy" "$SITE/ssl" "$SITE/log" "$SITE/index"
+          sed 's/search\.example\.com/ci.test/g' deploy/1panel/site-server.conf > "$SITE/site.conf"
+          cp deploy/1panel/reverse-proxy.conf "$SITE/proxy/root.conf"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=ci.test' \
+            -keyout "$SITE/ssl/privkey.pem" \
+            -out "$SITE/ssl/fullchain.pem" >/dev/null 2>&1
+          sed -i "s#/www/sites/ci.test#$SITE#g" "$SITE/site.conf"
+          {
+            echo 'events {}'
+            echo 'http {'
+            cat "$SITE/site.conf"
+            echo '}'
+          } > "$RUNNER_TEMP/nginx.conf"
+          docker run --rm \
+            -v "$RUNNER_TEMP/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            -v "$SITE:$SITE" \
+            nginx:1.27-alpine nginx -t
