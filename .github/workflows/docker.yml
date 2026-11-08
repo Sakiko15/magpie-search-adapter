@@ -4,13 +4,14 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-    # README, compose files and .env.example never end up in the image;
-    # skip those builds.
+    # README, compose files, .env.example and CI config never end up in the
+    # image; skip those builds.
     paths-ignore:
       - "**/*.md"
       - "deploy/**"
       - ".env.example"
       - "docker-compose*.yml"
+      - ".github/**"
   workflow_dispatch:
 
 permissions:

@@ -345,8 +345,16 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 ### 方式 A：预构建镜像（一键，推荐）
 
 1. 等 GitHub Actions 的 `docker` 工作流跑完（仓库 Actions 页）。首次发布后到 GitHub → Packages → `magpie-search-adapter` → Package settings，确认 visibility 是 **Public**（公开仓库默认继承；匿名拉取必须 Public）。
-2. 1Panel → 容器 → 编排 → 创建编排 → 名称 `magpie-search-adapter` → **编辑**，粘贴 `deploy/1panel/docker-compose.yml` 的内容。
-3. compose 分「核心配置」（镜像/容器名/重启/端口，一般不动）和「环境变量」两块。只改环境变量里标 `Required` 的两行：`ADAPTER_API_KEYS`（用 `openssl rand -hex 32` 生成）和 `MAGPIE_API_KEY`；其余都有默认值，调优项以注释列出，取消注释即生效（完整含义见上面“配置”）。保存并启动。
+2. 1Panel → 容器 → 编排 → 创建编排 → 名称 `magpie-search-adapter` → **编辑**，粘贴 `deploy/1panel/docker-compose.yml` 全文。**不要在这个编辑器里手工改任何一行**——多一个空格或回车就会改坏缩进（报 `did not find expected key`）。
+3. 1Panel → 文件 打开 `/opt/1panel/docker/compose/magpie-search-adapter/`，新建 `.env`（纯文本，不走 YAML 解析），内容取自仓库的 [`.env.example`](.env.example)，至少填这几行：
+
+   ```dotenv
+   ADAPTER_API_KEYS=<openssl rand -hex 32 的输出；多个客户端用逗号分隔>
+   MAGPIE_API_KEY=<有效的 Magpie gateway key>
+   MAGPIE_BASE_URL=https://magpie.example.com   # 你的 Magpie 网关地址
+   ```
+
+   保存后回到编排页点启动。密钥放 `.env`、YAML 不改，是最不容易出错的方式；`.env.example` 里还有可选的调优项（超时、重试、缓存等），含义见上面“配置”。
 4. 容器列表里看到 `magpie-search-adapter` 运行后，在服务器上验证：
 
    ```bash
@@ -363,6 +371,7 @@ curl -s http://127.0.0.1:8787/v1/tools/search -H "Authorization: Bearer $KEY" \
 
    （1Panel 默认编排目录；安装路径不同就替换。）
 6. ghcr.io 拉不动时：给 Docker 配置代理，或改用方式 B。
+7. **排错**：1Panel 报 `docker-compose config failed ... did not find expected key` / `while parsing a block mapping`，说明编排里的 YAML 缩进被改动了（在编辑器里手工输入最常见）。把 `deploy/1panel/docker-compose.yml` 全文**整体替换**（不要逐行编辑）即可；本方案所有配置都在 `.env` 里，YAML 保持原样就不会再触发。
 
 ### 方式 B：源码构建（备用）
 

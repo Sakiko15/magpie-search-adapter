@@ -1,0 +1,37 @@
+name: compose
+
+on:
+  push:
+    paths:
+      - "docker-compose*.yml"
+      - "deploy/**"
+      - ".env.example"
+      - ".github/workflows/compose.yml"
+  pull_request:
+    paths:
+      - "docker-compose*.yml"
+      - "deploy/**"
+      - ".env.example"
+      - ".github/workflows/compose.yml"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker compose config needs the env files to exist; this also proves
+      # every env_file path is right.
+      - name: Prepare env files
+        run: |
+          cp .env.example .env
+          cp .env.example deploy/1panel/.env
+
+      # The same parser 1Panel runs (Docker Compose v2), so a file it would
+      # reject fails here first.
+      - name: Validate compose files
+        run: |
+          docker compose -f deploy/1panel/docker-compose.yml config -q
+          docker compose -f docker-compose.example.yml config -q
+          docker compose -f docker-compose.new-api.example.yml config -q

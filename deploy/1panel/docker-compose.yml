@@ -1,46 +1,13 @@
 # Paste this file into 1Panel: 容器 -> 编排 -> 创建编排 -> 编辑.
-# Change the two required environment variables, then save and start.
+# Nothing here needs editing: put a .env file in the same directory (copy
+# .env.example from the repo). 1Panel's OpenResty proxies to 127.0.0.1:8787,
+# so never open that port in the firewall.
 services:
   magpie-search-adapter:
-    # ===== Core settings =====
-    # How the container runs; you normally leave these alone.
     image: ghcr.io/sakiko15/magpie-search-adapter:latest
     container_name: magpie-search-adapter
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
-      # Loopback only: 1Panel's OpenResty proxies to it. Never open 8787 in
-      # the firewall.
       - "127.0.0.1:8787:8787"
-
-    # ===== Environment variables =====
-    environment:
-      # --- Required ---
-      # Comma-separated client keys; give each client its own.
-      ADAPTER_API_KEYS: "change-me-to-a-long-random-key"
-      # A valid Magpie gateway key. Never reuse ADAPTER_API_KEYS here.
-      MAGPIE_API_KEY: "sk-magpie-key-replace-me"
-
-      # --- Common (defaults shown; override when needed) ---
-      LISTEN_ADDR: "0.0.0.0:8787"
-      # Your Magpie gateway URL (the example host is a placeholder).
-      MAGPIE_BASE_URL: "https://magpie.example.com"
-      MAGPIE_SEARCH_MODE: "mcp"   # mcp or alpha
-      MAGPIE_FETCH_MODE: "mcp"    # mcp or off
-
-      # --- Tuning (defaults in the comments; uncomment to change) ---
-      # INIT_TIMEOUT: "10s"
-      # REQUEST_TIMEOUT: "60s"
-      # FETCH_TIMEOUT: "90s"
-      # DEFAULT_COUNT: "6"
-      # MAX_COUNT: "20"
-      # FETCH_MAX_CHARS: "100000"
-      # MAX_BODY_BYTES: "1048576"
-      # MAX_CONCURRENCY: "32"
-      # UPSTREAM_RETRIES: "2"
-      # RETRY_BASE_DELAY: "200ms"
-      # RETRY_MAX_DELAY: "2s"
-      # SEARCH_BUDGET: "60s"        # 2-3x REQUEST_TIMEOUT lets a timed-out attempt retry
-      # SEARCH_CACHE_TTL: "30s"     # 0 disables the result cache
-      # SEARCH_CACHE_SIZE: "1024"
-      # ALLOW_KEYLESS_CIDRS: ""     # keep empty behind the proxy; use ?key= instead
-      # LOG_LEVEL: "info"
